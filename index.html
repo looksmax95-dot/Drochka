@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Моя галерея</title>
+<title>Галерея</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #0f0f13; color: #fff; font-family: system-ui, sans-serif; }
@@ -13,18 +13,20 @@
   .card { break-inside: avoid; margin-bottom: 6px; border-radius: 6px; overflow: hidden; background: #1a1a1a; }
   .card img { width: 100%; display: block; opacity: 0; transition: 0.3s; cursor: pointer; }
   .card.loaded img { opacity: 1; }
+  
   .lb { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.95); display: none; align-items: center; justify-content: center; flex-direction: column; }
   .lb.open { display: flex; }
   .lb img { max-width: 100vw; max-height: 90vh; object-fit: contain; }
   .lb-close { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.2); color: #fff; border: none; width: 44px; height: 44px; border-radius: 50%; font-size: 20px; cursor: pointer; }
   .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); color: #fff; border: none; width: 44px; height: 44px; border-radius: 50%; font-size: 24px; cursor: pointer; }
   .lb-prev { left: 10px; } .lb-next { right: 10px; }
+  
   .loader { text-align: center; padding: 50px; color: #888; }
 </style>
 </head>
 <body>
 
-<div id="loader" class="loader">Сканирую папку img...</div>
+<div id="loader" class="loader">Загружаю список твоих артов с GitHub...</div>
 <div class="grid" id="grid" style="display:none;"></div>
 
 <div class="lb" id="lb">
@@ -42,62 +44,72 @@ const lbImg = document.getElementById('lbImg');
 let images = [];
 let currentIndex = 0;
 
-// Проверяем, есть ли картинка по пути
-function checkImage(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(url);
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
+// Эта функция сама узнает твой ник и название репозитория
+async function init() {
+  try {
+    const hostname = location.hostname;
+    if (!hostname.endsWith('.github.io')) {
+      throw new Error('Запусти через GitHub Pages');
+    }
+    
+    // Вытаскиваем ник и репо из адресной строки
+    const owner = hostname.split('.')[0];
+    const repo = location.pathname.split('/').filter(Boolean)[0] || 'gallery';
+    
+    // Спрашиваем у GitHub API, какие файлы лежат в папке img
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/img`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      // Если папки img нет, ищем картинки прямо в корне (вдруг ты туда закинул)
+      const rootRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/`);
+      const rootFiles = await rootRes.json();
+      processFiles(rootFiles, owner, repo, true);
+      return;
+    }
+    
+    const files = await response.json();
+    processFiles(files, owner, repo, false);
+    
+  } catch (e) {
+    loader.innerHTML = 'Ошибка. Убедись, что папка img загружена на GitHub, а сайт включён в Settings > Pages.<br><br>' + e.message;
+  }
 }
 
-async function init() {
-  let misses = 0;
-  // Перебираем номера от 1 до 200
-  for (let i = 1; i <= 200; i++) {
-    let found = null;
-    // Проверяем популярные форматы
-    for (let ext of ['jpg', 'jpeg', 'png', 'webp']) {
-      let url = `img/${i}.${ext}`;
-      found = await checkImage(url);
-      if (found) break;
-    }
-
-    if (found) {
-      images.push(found);
-      addCard(found, images.length - 1);
-      misses = 0;
-    } else {
-      misses++;
-      if (misses > 5) break; // Если 5 номеров подряд пустые — останавливаемся
-    }
+function processFiles(files, owner, repo, isRoot) {
+  // Фильтруем только картинки
+  const imgFiles = files
+    .filter(f => f.type === 'file' && /\.(jpe?g|png|webp|gif|avif)$/i.test(f.name))
+    .sort((a, b) => a.name.localeCompare(b.name)); // Сортируем по алфавиту
+    
+  if (imgFiles.length === 0) {
+    loader.innerHTML = 'В папке img не найдено картинок.';
+    return;
   }
+
+  // Получаем прямые ссылки на картинки
+  images = imgFiles.map(f => f.download_url);
+  
+  // Создаем карточки
+  images.forEach((url, index) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const img = document.createElement('img');
+    img.src = url;
+    img.loading = 'lazy';
+    img.onload = () => card.classList.add('loaded');
+    
+    card.addEventListener('click', () => {
+      currentIndex = index;
+      openLb();
+    });
+    
+    card.appendChild(img);
+    grid.appendChild(card);
+  });
 
   loader.style.display = 'none';
-  if (images.length === 0) {
-    loader.style.display = 'block';
-    loader.innerHTML = 'Не нашел картинки.<br>Убедись, что они лежат в папке img и называются 1.jpg, 2.jpg...';
-  } else {
-    grid.style.display = 'block';
-  }
-}
-
-function addCard(url, index) {
-  const card = document.createElement('div');
-  card.className = 'card';
-  const img = document.createElement('img');
-  img.src = url;
-  img.loading = 'lazy';
-  img.onload = () => card.classList.add('loaded');
-  
-  card.addEventListener('click', () => {
-    currentIndex = index;
-    openLb();
-  });
-  
-  card.appendChild(img);
-  grid.appendChild(card);
+  grid.style.display = 'block';
 }
 
 function openLb() {
